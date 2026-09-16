@@ -3,8 +3,10 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +63,37 @@ class Diagnostics(unittest.TestCase):
         self.assertIn('agent_invalid_state', report)
         self.assertIn('backend', report)
         self.assertEqual((self.folder / 'report.txt').stat().st_mode & 0o777, 0o600)
+
+    def test_open_does_not_kill_a_running_agent_window(self):
+        # omarchy-agent execs a terminal that stays in the foreground. A wait
+        # with timeout=15 used to SIGKILL that window. The fake launcher here
+        # sleeps like that TUI; open must return without reaping it.
+        launcher = self.bin / 'omarchy-agent'
+        launcher.write_text(
+            '#!/usr/bin/env python3\n'
+            'import json, os, sys, time\n'
+            'from pathlib import Path\n'
+            'state = Path(os.environ["XDG_STATE_HOME"])\n'
+            'state.joinpath("launched").write_text(json.dumps(sys.argv[1:]))\n'
+            'state.joinpath("pid").write_text(str(os.getpid()))\n'
+            'time.sleep(30)\n'
+        )
+        launcher.chmod(0o700)
+        pid_file = self.root / 'state/pid'
+
+        def stop_agent():
+            if not pid_file.exists():
+                return
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass
+
+        self.addCleanup(stop_agent)
+        started = time.monotonic()
+        self.call('open')
+        self.assertLess(time.monotonic() - started, 5)
+        os.kill(int(pid_file.read_text()), 0)
 
     def test_untrusted_existing_log_is_sanitized_again(self):
         self.call('record', [self.event()])

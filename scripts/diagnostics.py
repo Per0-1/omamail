@@ -160,8 +160,21 @@ def main(mode):
                 'An unknown error means the original text was omitted for privacy. '
                 'agent_invalid_state can indicate AI history written by an incompatible backend version. '
                 'The source checkout or installed plugin is at ' + str(ROOT) + '.')
-    subprocess.run(['omarchy-agent', '--prompt', prompt], check=True, timeout=15,
-                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # omarchy-agent execs the terminal and can stay in the foreground for the
+    # whole TUI session. Waiting with a timeout kills that window (SIGKILL).
+    proc = subprocess.Popen(
+        ['omarchy-agent', '--prompt', prompt],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        rc = proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        return
+    if rc != 0:
+        raise subprocess.CalledProcessError(rc, proc.args)
 
 
 if __name__ == '__main__':
